@@ -1,0 +1,341 @@
+---
+title: "sysbio"
+author: "Marín Dögg Bjarnadóttir"
+date: "3/30/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# loading useful packages
+library(ggplot2)
+library(stats)
+library(factoextra)
+library(gridExtra)
+library(dplyr)
+library(entropy)
+library(tidyverse)
+library(class)
+library(caret)
+```
+
+
+
+```{r}
+# open dataset
+gogn<-read.csv("gognrett.csv", header=TRUE)
+```
+
+
+```{r}
+# remove non useful columns (keep only biomarkers and patients status)
+gogni<-data.frame(gogn[,c(8,31:520)])
+```
+
+```{r}
+# view number of patients 
+summary(gogni$death_from_cancer)
+```
+
+
+```{r}
+# encode death_from_cancer data as factor 
+gogni$death_from_cancer<-as.factor(gogni$death_from_cancer)
+```
+
+
+
+```{r}
+# remove "Died of Other Causes" patients 
+datf <- gogni[!(gogni$death_from_cancer=="Died of Other Causes"),]
+```
+
+```{r}
+#remove pam50_._claudin.low_subtype=="NC" patients 
+datf <- datf[!(datf$pam50_._claudin.low_subtype=="NC"),]
+
+#and put this variable as factor
+datf$pam50_._claudin.low_subtype<-as.factor(datf$pam50_._claudin.low_subtype)
+
+# view repartition of "pam50_._claudin.low_subtype" variable
+summary((datf$pam50_._claudin.low_subtype))
+```
+```{r}
+# view the different values of "pam50_._claudin.low_subtype" 
+levels(datf$pam50_._claudin.low_subtype)
+```
+
+
+```{r}
+# encode "pam50_._claudin.low_subtype" variables as number (instead of characters)
+datf$pam50_._claudin.low_subtype <- factor(datf$pam50_._claudin.low_subtype,levels=c("Basal","claudin-low","Her2","LumA","LumB","Normal"),labels = c(0,1,2,3,4,5))
+
+# and put those "char numbers" as numeric numbers.
+datf$pam50_._claudin.low_subtype<-as.numeric(datf$pam50_._claudin.low_subtype)
+```
+
+
+```{r}
+# view different values of "cancer status"
+levels(datf$death_from_cancer)
+```
+
+```{r}
+#and view number of patients in each categories for "cause of death"
+summary(datf$death_from_cancer)
+```
+
+```{r}
+# drop unused level : the "Died of Other Causes" level.
+datf$death_from_cancer<-droplevels(datf$death_from_cancer)
+```
+
+
+```{r}
+# encode status cancer as numeric values
+datf$death_from_cancer <- factor(datf$death_from_cancer,levels=c("Living","Died of Disease"),labels = c(0,1))
+datf$death_from_cancer<-as.numeric(datf$death_from_cancer)
+
+# view some statistics on "death_from_cancer" variables
+summary(datf$death_from_cancer)
+
+# remove na values
+datf<-na.omit(datf)
+
+# view some statistics on "death_from_cancer" variables without na values
+summary(datf$death_from_cancer)
+```
+
+
+
+```{r}
+# create a min_max_norm function 
+min_max_norm <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+  }
+```
+
+
+
+```{r}
+# apply the min_max_norm function  on the dataset.
+datf2 <- as.data.frame(lapply(datf[,], min_max_norm))
+```
+
+```{r}
+# check dimensions 
+dim(datf2)
+```
+
+
+```{r}
+# remove the 3rd column
+datf2 <- datf2[, colnames(datf2)[c(2, 1, 4:491)]]
+```
+
+
+```{r}
+# check dimensions
+dim(datf2)
+```
+
+```{r}
+# put "death_from_cancer" variable as binary variable
+datf2$death_from_cancer[datf2$death_from_cancer < 1] <- 0
+
+# view 6 first lines of the dataset
+head(datf2)
+```
+
+
+```{r}
+#split into train and test set : we use 75% of the sample size
+smp_size <- floor(0.75 * nrow(datf2))
+
+## set the seed to make your partition reproducible
+set.seed(123)
+
+# choose randomly which lines will go into the training set and which will go into the test set.
+train_ind <- sample(seq_len(nrow(datf2)), size = smp_size)
+
+# create 2 new subsets : the train and the test set
+train <- datf2[train_ind, ]
+test <- datf2[-train_ind, ]
+```
+
+
+```{r}
+
+##extract train target values
+datf2_target_category <- datf2[train_ind,1] 
+
+##extract test target values
+datf2_test_category <- datf2[-train_ind,1]
+
+```
+
+
+```{r}
+
+##load the package class
+library(class) 
+
+##run knn function
+pr <- knn(train,test,cl=datf2_target_category,k=10)
+
+##create confusion matrix
+tab <- table(pr,datf2_test_category)
+
+##this function divides the correct predictions by total number of predictions that tell us how accurate teh model is.
+ 
+accuracy <- function(x){sum(diag(x)/(sum(rowSums(x)))) * 100}
+accuracy(tab)
+
+# this is just aother way to calculate accuracy
+mean(pr == datf2_test_category)
+```
+
+
+```{r}
+
+# create a table to save each accuracy using different k.
+acc <- c()
+
+# for loop using k from 1 to 30 (in order to find the "best k")
+ for(i in 1:30) {
+    pr <- knn(train,test,cl=datf2_target_category,k=i)
+    m <- mean(pr == datf2_test_category)
+    acc <- c(acc, m)
+ }
+
+# plot accuracy for each k
+plot(acc, type = "b")
+```
+
+
+```{r}
+
+# find maw accuracy
+max(acc)
+
+# knn for this k = 5
+pr <- knn(train,test,cl=datf2_target_category,k=5)
+```
+
+
+```{r}
+
+# make cufusion matrix
+cm <- confusionMatrix(factor(pr), factor(test$death_from_cancer), dnn = c("Prediction", "Reference"))
+
+ # make the confusion matrix as a data frame
+plt <- as.data.frame(cm$table)
+
+#make prediction of the confusion matrix as factor
+plt$Prediction <- factor(plt$Prediction, levels=rev(levels(plt$Prediction)))
+```
+
+
+```{r}
+# plot the confusion matrix
+ggplot(plt, aes(Prediction,Reference, fill= Freq)) +
+        geom_tile() + geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low="white", high="#009194") +
+        labs(x = "Reference",y = "Prediction")
+
+attach(datf2)
+
+# make linear model
+fit <- lm(death_from_cancer~., data=datf2)
+
+# and look at the summary of the linear model
+summary(fit)
+```
+
+
+```{r}
+# load useful package for random forest
+library(vita)
+library(randomForest)
+library(caret)
+library(varImp)
+```
+
+
+```{r}
+# put "death_from_cancer" variable as factor variable
+datf2$death_from_cancer <- as.character(datf2$death_from_cancer)
+datf2$death_from_cancer <- as.factor(datf2$death_from_cancer)
+```
+
+
+```{r}
+
+# build random forest on the dataset
+regressor <- randomForest(death_from_cancer ~. , data = datf2, importance=TRUE) # fit the random forest with default parameter
+
+print(regressor)
+```
+
+
+```{r}
+
+# use tuneRF function in order to find the best mtry value 
+# where mtry parameter is "the Number of variables randomly sampled as candidates at each split"
+
+mtry <- tuneRF(datf2[-1],datf2$death_from_cancer, ntreeTry=500,
+               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
+best.m <- mtry[mtry[, 2] == min(mtry[, 2]), 1]
+
+# look at each mtry tried and their OOBError
+print(mtry)
+
+# print best mtry
+print(best.m)
+
+# set the seed to make your partition reproducible
+set.seed(1)
+```
+
+
+```{r}
+
+# again random forest using this time the best mtry found
+rf <-randomForest(death_from_cancer~.,data=datf2, mtry=best.m, importance=TRUE,ntree=500)
+
+print(rf)
+```
+
+
+```{r}
+
+#Evaluate variable importance
+importance(rf)
+
+# plot 1o most important variables
+varImpPlot(rf, n.var = 10)
+
+```
+
+Mean Decrease Accuracy - How much the model accuracy decreases if we drop that variable.
+
+Mean Decrease Gini - Measure of variable importance based on the Gini impurity index used for the calculation of splits in trees.`
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

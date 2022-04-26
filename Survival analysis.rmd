@@ -1,0 +1,413 @@
+---
+title: "statsysbio"
+author: "Marín Dögg Bjarnadóttir"
+date: "4/6/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, error=FALSE,comment=FALSE,message=FALSE}
+library(tidyverse)
+library(survival)
+library(haven)
+library(muhaz)
+library(survminer)
+library(tableone)
+library(readxl)
+library(biostat3)
+library(prodlim)
+library(broom)
+library(emmeans)
+library(multcomp)
+library(rms)
+library(table1)
+
+library(ggplot2)
+library(stats)
+library(factoextra)
+library(gridExtra)
+library(dplyr)
+library(entropy)
+
+```
+
+## Preparing the data
+
+
+```{r}
+gogn<-read.csv("gognrett.csv", header=TRUE)
+```
+
+
+Picking the columns we want
+
+```{r}
+datf<-gogn[,c(8,23,24,31:520)]
+```
+
+
+Getting rid of those who did not die from cancer
+
+```{r}
+datf <- datf[!(datf$death_from_cancer=="Died of Other Causes"),]
+```
+
+Creating a variable with survival in years and making 20 be the highest number of years since that will be our follow up time.
+
+```{r}
+datf$overall_survival_months<-datf$overall_survival_months/12
+names(datf)[names(datf) == "overall_survival_months"] <- "surv_y"
+datf$surv_y<-pmin(datf$surv_y,20)
+
+```
+
+
+Making death by cancer into a factor
+
+```{r}
+datf$death_from_cancer<-droplevels(as.factor(datf$death_from_cancer))
+summary(datf$death_from_cancer)
+```
+
+
+```{r}
+datf$death_from_cancer <- factor(datf$death_from_cancer,levels=c("Living","Died of Disease"),labels = c(0,1))
+summary(datf$death_from_cancer)
+datf<-na.omit(datf)
+summary(datf$death_from_cancer)
+```
+
+Looking at the pam50 types of cancer
+
+```{r}
+summary(as.factor(datf$pam50_._claudin.low_subtype))
+```
+
+Dropping the NC type since it has only 4 cases
+And making it into a factor.
+
+```{r}
+datf <- datf[!(datf$pam50_._claudin.low_subtype=="NC"),]
+datf$pam50_._claudin.low_subtype<-as.factor(datf$pam50_._claudin.low_subtype)
+summary((datf$pam50_._claudin.low_subtype))
+```
+Here we do similar work with oncotree code (we do not use this in the final results)
+
+```{r}
+
+datf$oncotree_code<-as.factor(datf$oncotree_code)
+table(datf$oncotree_code)
+```
+
+I'm dropping the IMMC since there are only 17 with that.
+
+```{r}
+datf <- datf[!(datf$oncotree_code=="BREAST"),]
+datf <- datf[!(datf$oncotree_code==""),]
+datf <- datf[!(datf$oncotree_code=="IMMC"),]
+datf$oncotree_code<-droplevels(datf$oncotree_code)
+```
+
+
+```{r}
+datf$oncotree_code <- factor(datf$oncotree_code,levels=c("IDC","ILC", "MDLC"),labels = c(0,1,2))
+summary(datf$oncotree_code)
+```
+
+
+
+Using results from random forrest to see in which columns the genes we are interested in are.
+
+```{r}
+which( colnames(datf)=="stat5a" )
+which( colnames(datf)=="e2f2" )
+which( colnames(datf)=="aurka" )
+which( colnames(datf)=="gsk3b" )
+which( colnames(datf)=="diras3" )
+which( colnames(datf)=="jak1" )
+which( colnames(datf)=="cdc25a" )
+which( colnames(datf)=="akt1" )
+which( colnames(datf)=="ncoa3" )
+which( colnames(datf)=="flt3" )
+```
+Making a new data with the variables mentioned above and the genes from the random forrest.
+
+```{r}
+datf2 <- datf[, colnames(datf)[c(1,2,3,4,33,44,52,57,119,125,154,174,349,377)]]
+```
+
+```{r}
+# Getting rid of 0 in survial in years.
+which(datf2$surv_y==0)
+datf2<-datf2[-147,]
+which(datf2$surv_y==0)
+```
+
+Looking a tad better at the data
+
+```{r}
+library(skimr)
+skim(datf2)
+```
+
+
+## Kaplan Meier
+
+```{r}
+mfit <- survfit(Surv(surv_y, as.numeric(death_from_cancer)) ~ 1, data = datf2)
+```
+
+```{r}
+plot(mfit,                                                     # plot Kaplan-Meier curve
+     ylab="S(t)",
+     xlab="Time since diagnosis in years",
+     main = "Kaplan−Meier estimates of cause−specific survival")
+```
+
+We can see that the survival is almost linear and decreases rather steadily with time.
+
+
+```{r}
+mfit2 <- survfit(Surv(surv_y, as.numeric(death_from_cancer)) ~ pam50_._claudin.low_subtype, data = datf2) # make Kaplan-Meier estimates
+#summary(mfit2) 
+```
+
+```{r}
+plot(survfit(Surv(surv_y, as.numeric(death_from_cancer)) ~ pam50_._claudin.low_subtype, data = datf2), 
+     xlab = "Time in Years", 
+     ylab = "Survival proportion", lty=2,col=c("red", "blue", "green", "purple", "orange", "pink"))
+legend(x = "bottomleft",  
+       legend = c("Basal", "claudin-low", "Her2", "LumA", "LumB", "Normal"), 
+       lty = 2, 
+       col = c("red", "blue", "green", "purple", "orange", "pink"),
+lwd = 2)
+```
+
+
+
+```{r}
+table(datf2$pam50_._claudin.low_subtype, datf2$death_from_cancer)
+```
+
+
+Here we can see that there is some difference in survival depending on the type of cancer
+
+```{r}
+# Just checking the numbers
+sum(datf2$surv_y<1)
+sum(datf2$surv_y<=5)
+sum(datf2$surv_y>5)
+sum(datf2$surv_y>10)
+sum(datf2$surv_y>15)
+sum(datf2$surv_y>19)
+```
+
+## Log-rank test
+
+Let's now perform a Logrank test on the data. Let's begin by putting the null hypothesis forward where $H_0$: No difference in survival between the two groups and $H_1$: There is a difference in survival between the two groups. We will use the significance level $\alpha=0.05$. 
+
+```{r}
+fit.diff <- survdiff(Surv(surv_y, as.numeric(death_from_cancer)) ~ pam50_._claudin.low_subtype, data=datf2)
+fit.diff
+```
+
+
+We can see that $p<0.05$ so we can reject the null hypothesis that there is no difference in survival between the two groups. So we can say that we expect a difference in survival rate between patients with different types of breast cancer.
+
+Because the logrank test is purely a test of significance it cannot provide an estimate of the size of the difference between the groups or a confidence interval.
+
+
+
+
+## Visualizing the expression of the genes compared to survival
+
+
+
+stat5a,aurka,gsk3b,e2f2,ncoa3,jak1,flt3,diras3,akt1,cdc25a
+```{r}
+aa <- ggplot(datf2, aes(pam50_._claudin.low_subtype, stat5a, color=death_from_cancer))
+plott1<-aa + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs stat5a")+stat_summary(aes(y = stat5a,group=1), fun=mean, colour="red", geom="line",group=1)
+bb <- ggplot(datf2, aes(pam50_._claudin.low_subtype, aurka, color=death_from_cancer))
+plott2<-bb + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs aurka")+stat_summary(aes(y = aurka,group=1), fun=mean, colour="red", geom="line",group=1)
+cc <- ggplot(datf2, aes(pam50_._claudin.low_subtype, gsk3b, color=death_from_cancer))
+plott3<-cc + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs gsk3b")+stat_summary(aes(y = gsk3b,group=1), fun=mean, colour="red", geom="line",group=1)
+dd <- ggplot(datf2, aes(pam50_._claudin.low_subtype, e2f2, color=death_from_cancer))
+plott4<-dd + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs e2f2")+stat_summary(aes(y = e2f2,group=1), fun=mean, colour="red", geom="line",group=1)
+ee <- ggplot(datf2, aes(pam50_._claudin.low_subtype, ncoa3, color=death_from_cancer))
+plott5<-ee + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs ncoa3")+stat_summary(aes(y = ncoa3,group=1), fun=mean, colour="red", geom="line",group=1)
+ff<- ggplot(datf2, aes(pam50_._claudin.low_subtype, jak1, color=death_from_cancer))
+plott6<-ff + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs jak1")+stat_summary(aes(y = jak1,group=1), fun=mean, colour="red", geom="line",group=1)
+gg <- ggplot(datf2, aes(pam50_._claudin.low_subtype, flt3, color=death_from_cancer))
+plott7<-gg + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs flt3")+stat_summary(aes(y = flt3,group=1), fun=mean, colour="red", geom="line",group=1)
+hh <- ggplot(datf2, aes(pam50_._claudin.low_subtype, diras3, color=death_from_cancer))
+plott8<-hh + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs diras3")+stat_summary(aes(y = diras3,group=1), fun=mean, colour="red", geom="line",group=1)
+ii <- ggplot(datf2, aes(pam50_._claudin.low_subtype, akt1, color=death_from_cancer))
+plott9<-ii + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs akt1")+stat_summary(aes(y = akt1,group=1), fun=mean, colour="red", geom="line",group=1)
+jj <- ggplot(datf2, aes(pam50_._claudin.low_subtype, cdc25a, color=death_from_cancer))
+plott10<-jj + geom_boxplot()+theme_bw()+ labs( x = "PAM50",
+title ="Types of cancer vs cdc25a")+stat_summary(aes(y = cdc25a,group=1), fun=mean, colour="red", geom="line",group=1)
+
+
+```
+
+```{r}
+grid.arrange(plott1, plott2,nrow = 2)
+grid.arrange(plott3, plott4,nrow = 2)
+grid.arrange(plott5,plott6,nrow = 2)
+grid.arrange(plott7,plott8 ,nrow = 2)
+grid.arrange(plott9,plott10,nrow = 2)
+```
+
+
+# ------------Additional analysis, not used in report-----------------------------------
+
+
+## Hazard plot depending on type of cancer - didn't use in the report
+
+```{r, warning=FALSE}
+
+plottari<-plot(muhaz2(Surv(surv_y, as.numeric(death_from_cancer)) ~ pam50_._claudin.low_subtype, data=datf2), lty=2,
+     xlab="Time since study entry (years)",legend=T,legend.args=(list(x="topleft"))
+     )
+plottari
+```
+
+
+## Cox model
+
+```{r}
+cox1<-coxph(Surv(surv_y, as.numeric(death_from_cancer)) ~ stat5a+aurka+gsk3b+(e2f2)+ncoa3+jak1+flt3+diras3+akt1+cdc25a,data=datf2)
+summary(cox1)
+```
+
+Here we can see the hazard ratios in  the exp(coef) column, so if the number is higher than one, that means the coef increases the hazard.
+
+So aurka, gsk3b,jak1 increase the hazard but looking at the CI the upper95 almost always surpasses 1.
+
+```{r}
+zcox1<-cox.zph(cox1)
+zcox1
+```
+
+
+
+
+
+
+Having very small p values indicates that there are time dependent coefficients which you need to take care of. That is to say, the proportionality assumption does not check linearity - the Cox PH model is semi parametric and thus makes no assumption as to the form of the hazard. The proportionality assumption is that the hazard rate of an individual is relatively constant in time, and this is what cox.zph() tests.
+
+
+```{r}
+plot(zcox1)
+```
+
+We can see that there are non proportional hazards and thus we need to try to fix that. 
+  
+
+
+```{r}
+datf2.split <- survSplit(Surv(surv_y, death_from_cancer)~stat5a+aurka+gsk3b+e2f2+ncoa3+jak1+flt3+diras3+akt1+cdc25a,cut=1000,data=datf2,episode = "Timeband")
+
+```
+
+
+
+```{r}
+
+cox2<-coxph(Surv(surv_y, as.numeric(death_from_cancer)) ~ Timeband:aurka+gsk3b+(e2f2)+ncoa3+jak1+flt3+diras3+akt1+(Timeband:cdc25a)+stat5a, data=datf2.split)
+summary(cox2)
+```
+
+```{r}
+zcox2<-cox.zph(cox2)
+zcox2
+```
+
+```{r}
+plot(zcox2)
+```
+
+
+
+## Looking at surival vs genes colored by events
+```{r}
+plot1 <- ggplot(datf2, aes(surv_y, stat5a,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years", title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot2 <- ggplot(datf2, aes(surv_y, e2f2,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years",  title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot3 <- ggplot(datf2, aes(surv_y, aurka,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years",  title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot4 <- ggplot(datf2, aes(surv_y, gsk3b,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years",  title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot5 <- ggplot(datf2, aes(surv_y, akt1,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years",  title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot6 <- ggplot(datf2, aes(surv_y, jak1,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years",  title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot7 <- ggplot(datf2, aes(surv_y, diras3,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years",  title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot8 <- ggplot(datf2, aes(surv_y, cdc25a,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years", y = "ccne1", title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot9 <- ggplot(datf2, aes(surv_y, ncoa3,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years",  title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+plot10 <- ggplot(datf2, aes(surv_y, flt3,color=death_from_cancer)) + geom_jitter(height = 2, width = 2) +theme_bw()+labs( x = "Survival in years", title ="Survival in years vs ccne1 colored by death from cancer")+
+labs(color = "Death from cancer")
+
+```
+
+```{r}
+
+grid.arrange(plot1, plot2 ,ncol=1)
+grid.arrange(plot3, plot4 ,ncol=1)
+grid.arrange(plot5, plot6 ,ncol=1)
+grid.arrange(plot7, plot8 ,ncol=1)
+grid.arrange(plot9, plot10 ,ncol=1)
+```
+
+```{r}
+corrdata<- datf2[,c(5:14)]
+```
+
+
+```{r}
+library(corrplot)
+m<-cor(corrdata)
+corrplot(m, method="number")
+```
+
+
+
+## Aalen's Additive model
+
+
+
+```{r}
+library(ggfortify)
+aa_fit <-survival::aareg(Surv(surv_y, as.numeric(death_from_cancer)) ~ aurka+gsk3b+e2f2+ncoa3+jak1+flt3+diras3+akt1+cdc25a+stat5a, data=datf2)
+aa_fit
+autoplot(aa_fit)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
